@@ -38,7 +38,9 @@
         }
 
         /* Search Feature */
-        .result-box { margin-top: 15px; padding: 15px; background-color: #e9ecef; border-radius: 4px; font-size: 16px; border-left: 4px solid #007bff; }
+        .result-box { margin-top: 15px; padding: 15px; background-color: #e9ecef; border-radius: 4px; font-size: 15px; border-left: 4px solid #007bff; max-height: 300px; overflow-y: auto; }
+        .search-list { margin: 10px 0 0 20px; padding: 0; list-style-type: disc; }
+        .search-list li { margin-bottom: 8px; }
     </style>
 </head>
 <body>
@@ -93,8 +95,8 @@
 </div>
 
 <script>
-    let globalParameters = {}; // Stores all parameters across all uploaded files
-    let isRawDataHeaderSet = false; // Flag to ensure we only draw the table header once
+    let globalParameters = []; // Array to store every parameter found across all files
+    let isRawDataHeaderSet = false; 
     
     // The specific parameters we want to isolate
     const formulaParams = [
@@ -114,7 +116,8 @@
         document.getElementById('dataHead').innerHTML = '';
         document.getElementById('dataBody').innerHTML = '';
         document.getElementById('calcTableBody').innerHTML = '';
-        globalParameters = {}; 
+        document.getElementById('searchResult').innerHTML = 'Search results will appear here...';
+        globalParameters = []; 
         isRawDataHeaderSet = false;
 
         Array.from(files).forEach((file) => {
@@ -127,11 +130,10 @@
                     const headers = rows[0];
                     const data = rows.slice(1);
                     
-                    // Extract parameters robustly
-                    const fileParams = robustExtractParameters(data, headers);
-                    Object.assign(globalParameters, fileParams);
+                    // Extract parameters robustly (pass the file name now)
+                    const fileParams = robustExtractParameters(data, headers, file.name);
                     
-                    // Run Math
+                    // Run Math for this file
                     calculateSquaredSum(file.name, fileParams);
 
                     // Display filtered data for ALL files
@@ -177,27 +179,34 @@
         return rows;
     }
 
-    // ROBUST EXTRACTION: Ignores missing quotes in the text
-    function robustExtractParameters(data, headers) {
-        let params = {};
+    // ROBUST EXTRACTION: Now records the file name for every parameter
+    function robustExtractParameters(data, headers, fileName) {
+        let params = {}; // Returned for the math function
         let paramIdx = headers.findIndex(h => h.trim().toUpperCase() === 'PARAMETERLIST');
 
         data.forEach(row => {
             if (paramIdx > -1 && row[paramIdx]) {
                 let cellText = row[paramIdx];
                 
-                // Break into individual { ... } blocks
                 let blocks = cellText.match(/\{[^{}]+\}/g);
                 if (blocks) {
                     blocks.forEach(block => {
-                        // Regex matches Name:value regardless of quotes
                         let nameMatch = block.match(/Name["'\s:]+([^"',}]+)/i);
                         let valMatch = block.match(/Value["'\s:]+([^"',}]+)/i);
                         
                         if (nameMatch) {
                             let key = nameMatch[1].trim();
                             let val = valMatch ? valMatch[1].trim() : "N/A";
-                            params[key] = val;
+                            
+                            // 1. Add to local dict for the Math Calculation
+                            params[key] = val; 
+                            
+                            // 2. Add to global Tracker for the Search Function
+                            globalParameters.push({
+                                fileName: fileName,
+                                name: key,
+                                value: val
+                            });
                         }
                     });
                 }
@@ -206,9 +215,9 @@
         return params;
     }
 
-    // SEARCH PARAMETER
+    // SEARCH PARAMETER: Finds all matches and lists them
     function searchParameter() {
-        const query = document.getElementById('searchInput').value.trim();
+        const query = document.getElementById('searchInput').value.trim().toLowerCase();
         const resultBox = document.getElementById('searchResult');
         
         if (!query) {
@@ -216,15 +225,26 @@
             return;
         }
 
-        if (globalParameters.hasOwnProperty(query)) {
-            resultBox.innerHTML = `Value for <strong>"${query}"</strong>: <span style="color:#007bff; font-weight:bold;">${globalParameters[query]}</span>`;
+        // First, try to find an exact (case-insensitive) match
+        let matches = globalParameters.filter(item => item.name.toLowerCase() === query);
+
+        // If no exact match, try a partial match (e.g., searching "8088" finds everything containing it)
+        if (matches.length === 0) {
+            matches = globalParameters.filter(item => item.name.toLowerCase().includes(query));
+        }
+
+        if (matches.length > 0) {
+            let html = `<strong>Found ${matches.length} result(s) for "${query}":</strong>`;
+            html += `<ul class="search-list">`;
+            
+            matches.forEach(match => {
+                html += `<li><strong>File:</strong> ${match.fileName} <br> <strong>Name:</strong> ${match.name} | <strong>Value:</strong> <span style="color:#007bff; font-weight:bold;">${match.value}</span></li>`;
+            });
+            
+            html += `</ul>`;
+            resultBox.innerHTML = html;
         } else {
-            let foundKey = Object.keys(globalParameters).find(k => k.toLowerCase() === query.toLowerCase());
-            if (foundKey) {
-                 resultBox.innerHTML = `Value for <strong>"${foundKey}"</strong>: <span style="color:#007bff; font-weight:bold;">${globalParameters[foundKey]}</span>`;
-            } else {
-                 resultBox.innerHTML = `Parameter <strong>"${query}"</strong> not found in PARAMETERLIST.`;
-            }
+            resultBox.innerHTML = `Parameter <strong>"${query}"</strong> not found in the PARAMETERLIST of any uploaded file.`;
         }
     }
 
@@ -262,14 +282,13 @@
         tbody.appendChild(tr);
     }
 
-    // RENDER DATA BROWSER (NOW SUPPORTS MULTIPLE FILES)
+    // RENDER DATA BROWSER
     function displayData(data, headers, fileName) {
         const thead = document.getElementById('dataHead');
         const tbody = document.getElementById('dataBody');
 
         const paramIdx = headers.findIndex(h => h.trim().toUpperCase() === 'PARAMETERLIST');
 
-        // Only keep rows that contain at least one of our formula parameters
         const relevantRows = data.filter(row => {
             if (paramIdx > -1 && row[paramIdx]) {
                 const cellText = row[paramIdx];
@@ -278,7 +297,6 @@
             return false;
         });
 
-        // Ensure the header is only drawn once, and we add a "File Name" column
         if (!isRawDataHeaderSet) {
             let headerRow = '<tr><th>File Name</th>';
             headers.forEach(header => { headerRow += `<th>${header}</th>`; });
@@ -287,7 +305,6 @@
             isRawDataHeaderSet = true;
         }
 
-        // If a file has no data, still show the file name but indicate missing data
         if (relevantRows.length === 0) {
             tbody.innerHTML += `<tr>
                 <td><strong>${fileName}</strong></td>
@@ -308,18 +325,16 @@
         });
     }
 
-    // FORMAT CELL: Isolates only the specific blocks in PARAMETERLIST
+    // FORMAT CELL
     function formatCellData(text, columnName) {
         let cleanText = text.trim();
         
         if (columnName === 'PARAMETERLIST') {
             let extractedMatches = [];
             
-            // Break the text into its { ... } blocks
             let blocks = cleanText.match(/\{[^{}]+\}/g);
             if (blocks) {
                 blocks.forEach(block => {
-                    // Check if the block contains any of our formula names
                     let isTarget = formulaParams.some(param => block.includes(param));
                     if (isTarget) {
                         extractedMatches.push(block);
