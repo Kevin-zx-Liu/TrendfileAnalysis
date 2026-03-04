@@ -81,8 +81,8 @@
     </div>
 
     <div class="section">
-        <h2>Filtered Raw Data (First Uploaded File)</h2>
-        <p><small>Showing only the specific formula parameters inside the <strong>PARAMETERLIST</strong>.</small></p>
+        <h2>Filtered Raw Data (All Uploaded Files)</h2>
+        <p><small>Showing only the specific formula parameters inside the <strong>PARAMETERLIST</strong> for all uploaded files.</small></p>
         <div class="table-container">
             <table id="dataTable">
                 <thead id="dataHead"></thead>
@@ -94,6 +94,7 @@
 
 <script>
     let globalParameters = {}; // Stores all parameters across all uploaded files
+    let isRawDataHeaderSet = false; // Flag to ensure we only draw the table header once
     
     // The specific parameters we want to isolate
     const formulaParams = [
@@ -109,13 +110,14 @@
         const files = event.target.files;
         if (!files.length) return;
 
-        // Reset UI
+        // Reset UI for new uploads
         document.getElementById('dataHead').innerHTML = '';
-        document.getElementById('dataBody').innerHTML = '<tr><td>Loading and processing data...</td></tr>';
+        document.getElementById('dataBody').innerHTML = '';
         document.getElementById('calcTableBody').innerHTML = '';
         globalParameters = {}; 
+        isRawDataHeaderSet = false;
 
-        Array.from(files).forEach((file, index) => {
+        Array.from(files).forEach((file) => {
             const reader = new FileReader();
             reader.onload = function(e) {
                 const text = e.target.result;
@@ -132,10 +134,8 @@
                     // Run Math
                     calculateSquaredSum(file.name, fileParams);
 
-                    // Display filtered data for first file
-                    if (index === 0) {
-                        displayData(data, headers);
-                    }
+                    // Display filtered data for ALL files
+                    displayData(data, headers, file.name);
                 }
             };
             reader.readAsText(file);
@@ -262,11 +262,10 @@
         tbody.appendChild(tr);
     }
 
-    // RENDER DATA BROWSER
-    function displayData(data, headers) {
+    // RENDER DATA BROWSER (NOW SUPPORTS MULTIPLE FILES)
+    function displayData(data, headers, fileName) {
         const thead = document.getElementById('dataHead');
         const tbody = document.getElementById('dataBody');
-        tbody.innerHTML = ''; 
 
         const paramIdx = headers.findIndex(h => h.trim().toUpperCase() === 'PARAMETERLIST');
 
@@ -279,13 +278,26 @@
             return false;
         });
 
-        let headerRow = '<tr>';
-        headers.forEach(header => { headerRow += `<th>${header}</th>`; });
-        headerRow += '</tr>';
-        thead.innerHTML = headerRow;
+        // Ensure the header is only drawn once, and we add a "File Name" column
+        if (!isRawDataHeaderSet) {
+            let headerRow = '<tr><th>File Name</th>';
+            headers.forEach(header => { headerRow += `<th>${header}</th>`; });
+            headerRow += '</tr>';
+            thead.innerHTML = headerRow;
+            isRawDataHeaderSet = true;
+        }
+
+        // If a file has no data, still show the file name but indicate missing data
+        if (relevantRows.length === 0) {
+            tbody.innerHTML += `<tr>
+                <td><strong>${fileName}</strong></td>
+                <td colspan="${headers.length}" style="text-align:center; color:#888;">No formula parameters found in this file.</td>
+            </tr>`;
+            return;
+        }
 
         relevantRows.forEach(row => {
-            let rowHtml = '<tr>';
+            let rowHtml = `<tr><td><strong>${fileName}</strong></td>`;
             for (let j = 0; j < headers.length; j++) {
                 let rawText = row[j] || '';
                 let columnName = headers[j] ? headers[j].trim().toUpperCase() : '';
