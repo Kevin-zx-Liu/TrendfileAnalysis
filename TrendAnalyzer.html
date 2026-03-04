@@ -3,40 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Equipment Data Viewer</title>
+    <title>Equipment Data Analyzer</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f7f6; }
-        .container { max-width: 100%; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
         h1, h2 { color: #333; }
-        .section { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
-        input[type="file"] { padding: 10px; }
+        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #fff; }
         
-        /* Table Styles */
-        .table-container { overflow-x: auto; max-height: 700px; overflow-y: auto; }
-        table { border-collapse: collapse; min-width: 100%; font-size: 13px; }
+        /* Inputs & Buttons */
+        input[type="file"], input[type="text"] { padding: 10px; margin-right: 10px; }
+        button { padding: 10px 15px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
+        .export-btn { background-color: #28a745; margin-bottom: 10px; }
+        .export-btn:hover { background-color: #218838; }
+
+        /* General Tables */
+        table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
         th, td { border: 1px solid #ccc; padding: 10px; text-align: left; vertical-align: top; }
         th { background-color: #007bff; color: white; position: sticky; top: 0; z-index: 2; }
         tr:nth-child(even) { background-color: #f9f9f9; }
-        
-        /* Formatted Parameter Styles */
-        .param-item { border-bottom: 1px solid #eee; padding: 3px 0; }
-        .param-item:last-child { border-bottom: none; }
-        .param-name { font-weight: bold; color: #444; }
-        .param-value { color: #0066cc; }
+
+        /* Raw Data Browser Specific */
+        .table-container { overflow-x: auto; max-height: 500px; overflow-y: auto; }
+        .param-item { 
+            font-family: monospace; 
+            color: #d9534f; 
+            font-weight: bold; 
+            background: #fff3f3; 
+            padding: 4px; 
+            margin-bottom: 4px; 
+            border: 1px solid #ffcccc; 
+            border-radius: 4px; 
+            display: inline-block;
+        }
+
+        /* Search Feature */
+        .result-box { margin-top: 15px; padding: 15px; background-color: #e9ecef; border-radius: 4px; font-size: 16px; border-left: 4px solid #007bff; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>Equipment Data Viewer</h1>
+    <h1>Equipment Data Analyzer</h1>
 
     <div class="section">
-        <h2>1. Upload CSV File</h2>
-        <input type="file" id="csvFileInput" accept=".csv">
+        <h2>1. Upload CSV Files</h2>
+        <input type="file" id="csvFileInput" accept=".csv" multiple>
+        <p><small>You can select multiple files at once to compare calculations.</small></p>
     </div>
 
     <div class="section">
-        <h2>Data Browser</h2>
+        <h2>2. Search Parameter (PARAMETERLIST)</h2>
+        <input type="text" id="searchInput" placeholder="Enter Parameter Name (e.g., LayerNumber)">
+        <button onclick="searchParameter()">Search</button>
+        <div id="searchResult" class="result-box">Search results will appear here...</div>
+    </div>
+
+    <div class="section">
+        <h2>3 & 4. Squared Sum Calculations</h2>
+        <button class="export-btn" onclick="exportToCSV()">Export Results to CSV</button>
+        <table id="calcTable">
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>AVE...XM1</th>
+                    <th>MIN...XM1</th>
+                    <th>MAX...XM1</th>
+                    <th>AVE...YM1</th>
+                    <th>MIN...YM1</th>
+                    <th>MAX...YM1</th>
+                    <th>Result (Squared Sum)</th>
+                </tr>
+            </thead>
+            <tbody id="calcTableBody">
+                </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Filtered Raw Data (First Uploaded File)</h2>
+        <p><small>Showing only the specific formula parameters inside the <strong>PARAMETERLIST</strong>.</small></p>
         <div class="table-container">
             <table id="dataTable">
                 <thead id="dataHead"></thead>
@@ -47,31 +93,56 @@
 </div>
 
 <script>
-    document.getElementById('csvFileInput').addEventListener('change', function(event) {
-        const file = event.target.files[0];
-        if (!file) return;
+    let globalParameters = {}; // Stores all parameters across all uploaded files
+    
+    // The specific parameters we want to isolate
+    const formulaParams = [
+        "MAX.AS2_8088XM1", 
+        "MAX.AS2_8088YM1", 
+        "MIN.AS2_8088XM1", 
+        "MIN.AS2_8088YM1", 
+        "AVE.AS2_8088XM1", 
+        "AVE.AS2_8088YM1"
+    ];
 
-        // Clear previous data
+    document.getElementById('csvFileInput').addEventListener('change', function(event) {
+        const files = event.target.files;
+        if (!files.length) return;
+
+        // Reset UI
         document.getElementById('dataHead').innerHTML = '';
         document.getElementById('dataBody').innerHTML = '<tr><td>Loading and processing data...</td></tr>';
+        document.getElementById('calcTableBody').innerHTML = '';
+        globalParameters = {}; 
 
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const text = e.target.result;
-            
-            // Use our custom, robust parser
-            const rows = parseEquipmentCSV(text);
-            
-            if (rows.length > 0) {
-                const headers = rows[0];
-                const data = rows.slice(1);
-                displayData(data, headers);
-            }
-        };
-        reader.readAsText(file);
+        Array.from(files).forEach((file, index) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const rows = parseEquipmentCSV(text);
+                
+                if (rows.length > 0) {
+                    const headers = rows[0];
+                    const data = rows.slice(1);
+                    
+                    // Extract parameters robustly
+                    const fileParams = robustExtractParameters(data, headers);
+                    Object.assign(globalParameters, fileParams);
+                    
+                    // Run Math
+                    calculateSquaredSum(file.name, fileParams);
+
+                    // Display filtered data for first file
+                    if (index === 0) {
+                        displayData(data, headers);
+                    }
+                }
+            };
+            reader.readAsText(file);
+        });
     });
 
-    // CUSTOM PARSER: Handles the exact \" format of your equipment logs
+    // CUSTOM PARSER: Safely reads the CSV
     function parseEquipmentCSV(text) {
         const rows = [];
         let currentRow = [];
@@ -81,109 +152,199 @@
         for (let i = 0; i < text.length; i++) {
             let char = text[i];
             
-            // 1. Handle escaped quotes (e.g., \")
-            // This turns [{\"Name\":...] directly into [{"Name":...] inside the cell
             if (char === '\\' && text[i+1] === '"') {
-                currentCell += '"';
-                i++; // Skip the next character so it doesn't trigger inQuotes
-            } 
-            // 2. Handle standard double-escaped quotes ("") just in case
-            else if (char === '"' && text[i+1] === '"') {
-                currentCell += '"';
-                i++; 
-            }
-            // 3. Toggle being inside or outside a column wrapper
-            else if (char === '"') {
+                currentCell += '"'; i++; 
+            } else if (char === '"' && text[i+1] === '"') {
+                currentCell += '"'; i++; 
+            } else if (char === '"') {
                 inQuotes = !inQuotes;
-            } 
-            // 4. End of a cell (comma outside of quotes)
-            else if (char === ',' && !inQuotes) {
+            } else if (char === ',' && !inQuotes) {
+                currentRow.push(currentCell); currentCell = '';
+            } else if ((char === '\n' || char === '\r') && !inQuotes) {
+                if (char === '\r' && text[i+1] === '\n') i++; 
                 currentRow.push(currentCell);
-                currentCell = '';
-            } 
-            // 5. End of a row (newline outside of quotes)
-            else if ((char === '\n' || char === '\r') && !inQuotes) {
-                if (char === '\r' && text[i+1] === '\n') i++; // Handle Windows \r\n
-                currentRow.push(currentCell);
-                
-                // Only add if the row isn't completely empty
-                if (currentRow.some(cell => cell.trim() !== '')) {
-                    rows.push(currentRow);
-                }
-                currentRow = [];
-                currentCell = '';
-            } 
-            // 6. Normal character
-            else {
+                if (currentRow.some(cell => cell.trim() !== '')) rows.push(currentRow);
+                currentRow = []; currentCell = '';
+            } else {
                 currentCell += char;
             }
         }
         
-        // Push the very last cell/row if the file doesn't end with a neat newline
         if (currentCell || currentRow.length > 0) {
             currentRow.push(currentCell);
-            if (currentRow.some(cell => cell.trim() !== '')) {
-                rows.push(currentRow);
-            }
+            if (currentRow.some(cell => cell.trim() !== '')) rows.push(currentRow);
         }
-        
         return rows;
     }
 
-    // Displays the data nicely in the HTML table
-    function displayData(data, headers) {
-        const thead = document.getElementById('dataHead');
-        const tbody = document.getElementById('dataBody');
-        tbody.innerHTML = ''; // Clear loading text
+    // ROBUST EXTRACTION: Ignores missing quotes in the text
+    function robustExtractParameters(data, headers) {
+        let params = {};
+        let paramIdx = headers.findIndex(h => h.trim().toUpperCase() === 'PARAMETERLIST');
 
-        // Render Headers
-        let headerRow = '<tr>';
-        headers.forEach(header => {
-            headerRow += `<th>${header}</th>`;
-        });
-        headerRow += '</tr>';
-        thead.innerHTML = headerRow;
-
-        // Render Rows (Limit to 100 to keep the browser fast)
-        const limit = Math.min(data.length, 100); 
-        for (let i = 0; i < limit; i++) {
-            let rowHtml = '<tr>';
-            
-            for (let j = 0; j < headers.length; j++) {
-                let rawText = data[i][j] || '';
-                let formattedHtml = formatCellData(rawText);
-                rowHtml += `<td>${formattedHtml}</td>`;
+        data.forEach(row => {
+            if (paramIdx > -1 && row[paramIdx]) {
+                let cellText = row[paramIdx];
+                
+                // Break into individual { ... } blocks
+                let blocks = cellText.match(/\{[^{}]+\}/g);
+                if (blocks) {
+                    blocks.forEach(block => {
+                        // Regex matches Name:value regardless of quotes
+                        let nameMatch = block.match(/Name["'\s:]+([^"',}]+)/i);
+                        let valMatch = block.match(/Value["'\s:]+([^"',}]+)/i);
+                        
+                        if (nameMatch) {
+                            let key = nameMatch[1].trim();
+                            let val = valMatch ? valMatch[1].trim() : "N/A";
+                            params[key] = val;
+                        }
+                    });
+                }
             }
-            
-            rowHtml += '</tr>';
-            tbody.innerHTML += rowHtml;
+        });
+        return params;
+    }
+
+    // SEARCH PARAMETER
+    function searchParameter() {
+        const query = document.getElementById('searchInput').value.trim();
+        const resultBox = document.getElementById('searchResult');
+        
+        if (!query) {
+            resultBox.innerHTML = "<strong>Please enter a Name to search.</strong>";
+            return;
+        }
+
+        if (globalParameters.hasOwnProperty(query)) {
+            resultBox.innerHTML = `Value for <strong>"${query}"</strong>: <span style="color:#007bff; font-weight:bold;">${globalParameters[query]}</span>`;
+        } else {
+            let foundKey = Object.keys(globalParameters).find(k => k.toLowerCase() === query.toLowerCase());
+            if (foundKey) {
+                 resultBox.innerHTML = `Value for <strong>"${foundKey}"</strong>: <span style="color:#007bff; font-weight:bold;">${globalParameters[foundKey]}</span>`;
+            } else {
+                 resultBox.innerHTML = `Parameter <strong>"${query}"</strong> not found in PARAMETERLIST.`;
+            }
         }
     }
 
-    // Tries to format the JSON arrays into clean "Name: Value" lists
-    function formatCellData(text) {
+    // MATH CALCULATION
+    function calculateSquaredSum(fileName, params) {
+        const aveX = parseFloat(params["AVE.AS2_8088XM1"]);
+        const minX = parseFloat(params["MIN.AS2_8088XM1"]);
+        const maxX = parseFloat(params["MAX.AS2_8088XM1"]);
+        const aveY = parseFloat(params["AVE.AS2_8088YM1"]);
+        const minY = parseFloat(params["MIN.AS2_8088YM1"]);
+        const maxY = parseFloat(params["MAX.AS2_8088YM1"]);
+
+        let resultText = "Missing Data";
+        
+        if (!isNaN(aveX) && !isNaN(minX) && !isNaN(maxX) && !isNaN(aveY) && !isNaN(minY) && !isNaN(maxY)) {
+            let calcResult = Math.pow(aveX - minX, 2) + 
+                             Math.pow(maxX - aveX, 2) + 
+                             Math.pow(maxY - aveY, 2) + 
+                             Math.pow(aveY - minY, 2);
+            resultText = calcResult.toFixed(5);
+        }
+
+        const tbody = document.getElementById('calcTableBody');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${fileName}</td>
+            <td>${!isNaN(aveX) ? aveX : 'N/A'}</td>
+            <td>${!isNaN(minX) ? minX : 'N/A'}</td>
+            <td>${!isNaN(maxX) ? maxX : 'N/A'}</td>
+            <td>${!isNaN(aveY) ? aveY : 'N/A'}</td>
+            <td>${!isNaN(minY) ? minY : 'N/A'}</td>
+            <td>${!isNaN(maxY) ? maxY : 'N/A'}</td>
+            <td style="font-weight:bold; color: #28a745; font-size:15px;">${resultText}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    // RENDER DATA BROWSER
+    function displayData(data, headers) {
+        const thead = document.getElementById('dataHead');
+        const tbody = document.getElementById('dataBody');
+        tbody.innerHTML = ''; 
+
+        const paramIdx = headers.findIndex(h => h.trim().toUpperCase() === 'PARAMETERLIST');
+
+        // Only keep rows that contain at least one of our formula parameters
+        const relevantRows = data.filter(row => {
+            if (paramIdx > -1 && row[paramIdx]) {
+                const cellText = row[paramIdx];
+                return formulaParams.some(param => cellText.includes(param));
+            }
+            return false;
+        });
+
+        let headerRow = '<tr>';
+        headers.forEach(header => { headerRow += `<th>${header}</th>`; });
+        headerRow += '</tr>';
+        thead.innerHTML = headerRow;
+
+        relevantRows.forEach(row => {
+            let rowHtml = '<tr>';
+            for (let j = 0; j < headers.length; j++) {
+                let rawText = row[j] || '';
+                let columnName = headers[j] ? headers[j].trim().toUpperCase() : '';
+                rowHtml += `<td>${formatCellData(rawText, columnName)}</td>`;
+            }
+            rowHtml += '</tr>';
+            tbody.innerHTML += rowHtml;
+        });
+    }
+
+    // FORMAT CELL: Isolates only the specific blocks in PARAMETERLIST
+    function formatCellData(text, columnName) {
         let cleanText = text.trim();
         
-        // Check if it's our target array format
-        if (cleanText.startsWith('[') && cleanText.endsWith(']')) {
-            try {
-                let parsed = JSON.parse(cleanText);
-                if (Array.isArray(parsed)) {
-                    // It's valid JSON! Make it look beautiful.
-                    return parsed.map(item => {
-                        let name = item.Name ? item.Name : 'Unknown';
-                        let val = item.hasOwnProperty('Value') ? item.Value : '';
-                        return `<div class="param-item"><span class="param-name">${name}:</span> <span class="param-value">${val}</span></div>`;
-                    }).join('');
-                }
-            } catch (e) {
-                // If the JSON is somehow still malformed, just safely show the raw text
-                return cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        if (columnName === 'PARAMETERLIST') {
+            let extractedMatches = [];
+            
+            // Break the text into its { ... } blocks
+            let blocks = cleanText.match(/\{[^{}]+\}/g);
+            if (blocks) {
+                blocks.forEach(block => {
+                    // Check if the block contains any of our formula names
+                    let isTarget = formulaParams.some(param => block.includes(param));
+                    if (isTarget) {
+                        extractedMatches.push(block);
+                    }
+                });
+            }
+
+            if (extractedMatches.length > 0) {
+                return extractedMatches.map(item => `<div class="param-item">${item}</div>`).join('<br>');
+            } else {
+                return '<span style="color:#888;">No formula parameters in this row</span>';
             }
         }
         
-        // Regular text cells (Dates, IDs, etc.)
         return cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // EXPORT TO CSV
+    function exportToCSV() {
+        let csv = [];
+        const rows = document.querySelectorAll("#calcTable tr");
+        for (let i = 0; i < rows.length; i++) {
+            let row = [], cols = rows[i].querySelectorAll("td, th");
+            for (let j = 0; j < cols.length; j++) {
+                row.push('"' + cols[j].innerText.replace(/"/g, '""') + '"');
+            }
+            csv.push(row.join(","));
+        }
+        
+        let csvFile = new Blob([csv.join("\n")], {type: "text/csv"});
+        let downloadLink = document.createElement("a");
+        downloadLink.download = "Calculation_Results.csv";
+        downloadLink.href = window.URL.createObjectURL(csvFile);
+        downloadLink.style.display = "none";
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
     }
 </script>
 
